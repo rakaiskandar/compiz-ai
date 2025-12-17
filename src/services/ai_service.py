@@ -10,10 +10,22 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 class AIService:
     @staticmethod
-    def generate_questions(topic: str, count: int, difficulty: str):
+    def generate_questions(
+        topic: str, count: int, difficulty: str, context: str = None
+    ):
+        context_section = ""
+        if context:
+            context_section = f"""
+        
+        GUNAKAN MATERI BERIKUT SEBAGAI REFERENSI UNTUK MEMBUAT SOAL:
+        ---
+        {context}
+        ---
+        """
+
         prompt = f"""
         Kamu adalah seorang guru yang professional. Buatkan {count} soal kuis tentang topik "{topic}".
-        
+        {context_section}
         Ketentuan:
         - Jenis soal: Pilihan Ganda (MCQ) dan Benar/Salah (True/False).
         - Tingkat kesulitan: {difficulty}.
