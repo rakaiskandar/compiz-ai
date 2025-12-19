@@ -3,6 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.api import question
 import uvicorn
 import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 app = FastAPI(title="Compiz AI")
 
@@ -19,9 +23,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/")
 def root():
     return {"message": "FastAPI backend running"}
+
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
