@@ -9,7 +9,6 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-
 class SupabaseService:
     @staticmethod
     def insert_question(question):
@@ -27,7 +26,7 @@ class SupabaseService:
         try:
             # Try exact match first
             response = (
-                supabase.table("courses_contents")
+                supabase.table("course_contents")
                 .select("id, title")
                 .ilike("title", f"%{topic}%")
                 .limit(1)
@@ -55,4 +54,34 @@ class SupabaseService:
             return response.data if response.data else []
         except Exception as e:
             print(f"Error fetching course contents: {e}")
+            return []
+
+    @staticmethod
+    def get_course_contents_by_topic(course_id: str, topic: str):
+        """Get course contents filtered by topic relevance"""
+        try:
+            response = (
+                supabase.table("course_contents")
+                .select("*")
+                .eq("course_id", course_id)
+                .ilike("content", f"%{topic}%")
+                .order("slide_number")
+                .limit(10)  # Limit to prevent too much context
+                .execute()
+            )
+
+            # If no specific match found, return first 10 slides
+            if not response.data or len(response.data) == 0:
+                response = (
+                    supabase.table("course_contents")
+                    .select("*")
+                    .eq("course_id", course_id)
+                    .order("slide_number")
+                    .limit(10)
+                    .execute()
+                )
+
+            return response.data if response.data else []
+        except Exception as e:
+            print(f"Error fetching course contents by topic: {e}")
             return []

@@ -2,6 +2,7 @@ import google.generativeai as genai
 import os
 from dotenv import load_dotenv
 import json
+from typing import List, Dict
 
 load_dotenv()
 
@@ -9,6 +10,61 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 
 class AIService:
+    @staticmethod
+    def split_content_to_chunks(
+        content: str, max_slides_per_chunk: int = 3
+    ) -> List[str]:
+        """Split content into smaller chunks based on slides"""
+        slides = content.split("**Slide")
+        chunks = []
+
+        for i in range(0, len(slides), max_slides_per_chunk):
+            chunk_slides = slides[i : i + max_slides_per_chunk]
+            # Re-add the **Slide prefix
+            chunk = "**Slide".join(chunk_slides).strip()
+            if chunk:
+                chunks.append(chunk)
+
+        return chunks
+
+    @staticmethod
+    def generate_questions_batch(
+        topic: str, total_count: int, difficulty: str, content_chunks: List[str]
+    ) -> List[Dict]:
+        """Generate questions in batches from multiple content chunks"""
+        all_questions = []
+
+        if not content_chunks:
+            # No context, generate all at once
+            return AIService.generate_questions(topic, total_count, difficulty, None)
+
+        # Distribute questions across chunks
+        questions_per_chunk = max(1, total_count // len(content_chunks))
+        remaining = total_count
+
+        for i, chunk in enumerate(content_chunks):
+            if remaining <= 0:
+                break
+
+            # Last chunk gets remaining questions
+            count = (
+                remaining
+                if i == len(content_chunks) - 1
+                else min(questions_per_chunk, remaining)
+            )
+
+            try:
+                questions = AIService.generate_questions(
+                    topic, count, difficulty, chunk
+                )
+                all_questions.extend(questions)
+                remaining -= len(questions)
+            except Exception as e:
+                print(f"Error generating questions for chunk {i}: {e}")
+                continue
+
+        return all_questions[:total_count]  # Ensure exact count
+
     @staticmethod
     def generate_questions(
         topic: str, count: int, difficulty: str, context: str = None

@@ -1,85 +1,10 @@
 from fastapi import APIRouter, Depends
-from src.dto.question_dto import GenerateRequest, ProcessCourseRequest
+from src.dto.question_dto import GenerateRequest
 from src.services.ai_service import AIService
-from src.services.embedding_service import EmbeddingService
-from src.services.chromadb_service import ChromaService
 from src.services.supabase_service import SupabaseService
 from src.middleware.auth import verify_token
 
 router = APIRouter(prefix="/ai")
-
-
-@router.post("/process-course")
-async def process_course(req: ProcessCourseRequest, user=Depends(verify_token)):
-    """Process course contents and store embeddings in ChromaDB (one-time per course)"""
-
-    # Check if already processed
-    if ChromaService.check_course_exists(req.course_id):
-        return {
-            "message": "Course already processed",
-            "course_id": req.course_id,
-            "note": "Use DELETE /ai/course/{course_id} to reprocess",
-        }
-
-    # Get all course contents from Supabase
-    contents = SupabaseService.get_course_contents(req.course_id)
-
-    if not contents:
-        return {
-            "message": "No contents found for this course",
-            "course_id": req.course_id,
-            "contents_found": 0,
-        }
-
-    processed_count = 0
-
-    for content in contents:
-        if not content.get("content"):
-            continue
-
-        # Generate embedding for the content
-        embedding = EmbeddingService.generate_embedding(content["content"])
-
-        if embedding:
-            # Store in ChromaDB
-            success = ChromaService.store_course_content(
-                course_id=req.course_id,
-                content_id=content["id"],
-                slide_number=content["slide_number"],
-                content=content["content"],
-                embedding=embedding,
-            )
-
-            if success:
-                processed_count += 1
-                print(f"Processed slide {content['slide_number']}")
-
-    return {
-        "message": "Course processed successfully",
-        "course_id": req.course_id,
-        "slides_processed": processed_count,
-        "total_slides": len(contents),
-    }
-
-
-@router.delete("/course/{course_id}")
-async def delete_course_embeddings(course_id: str, user=Depends(verify_token)):
-    """Delete all embeddings for a course"""
-    success = ChromaService.delete_course_embeddings(course_id)
-
-    if success:
-        return {
-            "message": "Course embeddings deleted successfully",
-            "course_id": course_id,
-        }
-    return {"message": "No embeddings found for this course", "course_id": course_id}
-
-
-@router.get("/stats")
-async def get_stats(user=Depends(verify_token)):
-    """Get ChromaDB collection statistics"""
-    stats = ChromaService.get_collection_stats()
-    return stats if stats else {"message": "Unable to fetch stats"}
 
 
 @router.post("/generate")
@@ -92,41 +17,38 @@ async def generate_questions(req: GenerateRequest, user=Depends(verify_token)):
     if course_id:
         print(f"✅ Found course for topic '{req.topic}': {course_id}")
 
-        # Check if course is processed in ChromaDB
-        if ChromaService.check_course_exists(course_id):
-            # Generate query embedding
-            query_embedding = EmbeddingService.generate_query_embedding(req.topic)
+        # Get course contents directly from Supabase (no embeddings needed)
+        contents = SupabaseService.get_course_contents_by_topic(course_id, req.topic)
 
-            if query_embedding:
-                # Search for relevant content in ChromaDB
-                similar_contents = ChromaService.search_similar_content(
-                    course_id=course_id,
-                    query_embedding=query_embedding,
-                    n_results=5,
-                )
-
-                if similar_contents:
-                    print(
-                        f"\n=== Found {len(similar_contents)} relevant content chunks ==="
-                    )
-                    # Sort by slide number
-                    similar_contents.sort(key=lambda x: x["metadata"]["slide_number"])
-                    context = "\n\n".join(
-                        [item["content"] for item in similar_contents]
-                    )
-                else:
-                    print("\n=== No relevant content found ===")
+        if contents:
+            print(f"\n=== Found {len(contents)} relevant content slides ===")
+            # Combine all content as context
+            context = "\n\n".join(
+                [
+                    f"**Slide {c['slide_number']}**\n{c['content']}"
+                    for c in contents
+                    if c.get("content")
+                ]
+            )
         else:
-            print("⚠️ Course found but not processed in ChromaDB yet")
+            print("\n=== No content found for this course ===")
     else:
         print(
             f"ℹ️ No matching course found for topic '{req.topic}', generating without context"
         )
 
-    # Generate questions with or without context
-    questions = AIService.generate_questions(
-        req.topic, req.count, req.difficulty, context
-    )
+    # Generate questions with chunked context for better token efficiency
+    if context:
+        chunks = AIService.split_content_to_chunks(context, max_slides_per_chunk=3)
+        print(f"📦 Split context into {len(chunks)} chunks")
+        questions = AIService.generate_questions_batch(
+            req.topic, req.count, req.difficulty, chunks
+        )
+    else:
+        # No context found, generate without context
+        questions = AIService.generate_questions(
+            req.topic, req.count, req.difficulty, None
+        )
     data = []
 
     for q in questions:
